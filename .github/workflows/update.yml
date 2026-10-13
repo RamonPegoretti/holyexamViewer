@@ -54,7 +54,18 @@ jobs:
       - name: Password-protect the page
         if: steps.check.outputs.publish == 'true'
         run: |
-          npx staticrypt dist/index.html -d dist --short --remember 0 --template-title "Voti di Ramon"
+          npx staticrypt dist/index.html -d dist --short --remember 0 \
+            -t login-template.html \
+            --template-title "Voti di Ramon" \
+            --template-instructions "Inserisci la password per vedere i voti." \
+            --template-placeholder "Password" \
+            --template-button "Entra" \
+            --template-remember "Ricordami su questo dispositivo" \
+            --template-error "Password sbagliata" \
+            --template-toggle-show "Mostra password" \
+            --template-toggle-hide "Nascondi password" \
+            --template-color-primary "#7c5cff" \
+            --template-color-secondary "#0b0f17"
           mv version.txt dist/version.txt
         env:
           STATICRYPT_PASSWORD: ${{ secrets.PAGE_PASSWORD }}

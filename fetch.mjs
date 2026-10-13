@@ -2,6 +2,7 @@
 // and writes a simple page to dist/index.html.
 import { createClient } from '@supabase/supabase-js';
 import { mkdirSync, writeFileSync } from 'node:fs';
+import { renderPage } from './page.mjs';
 
 // Public values from the app's config.js (safe to share by design).
 const SUPABASE_URL = 'https://tzeimuczwvpqysebswmx.supabase.co';
@@ -66,8 +67,6 @@ await sb.auth.signOut();
 
 // ---------- build the page ----------
 const subjById = Object.fromEntries(subjects.map((s) => [s.id, s]));
-const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
-const fmtDate = (d) => (d ? new Date(d).toLocaleDateString('it-CH', { day: '2-digit', month: '2-digit', year: 'numeric', timeZone: 'Europe/Zurich' }) : '');
 
 // Weight: missing = 1, 0 = does not count.
 const weightOf = (g) => (g.weight === null || g.weight === undefined || g.weight === '' ? 1 : Number(g.weight));
@@ -143,48 +142,10 @@ const years = Object.entries(groupBy(grades, (g) => g.school_year ?? '?'))
       bySem: Object.fromEntries(semesters.map((sem) => [sem, mean(inOverall.map((r) => r.bySem[sem]))])),
       year: mean(inOverall.map((r) => r.year)),
     };
-    return { year, semesters, rows, overall };
+    return { year, semesters, lastSem, rows, overall };
   });
 
-const color = (v) => (v === null ? 'muted' : v >= 5 ? 'good' : v >= 4 ? 'ok' : 'bad');
-const fmtAvg = (v) => (v === null ? '–' : v.toFixed(2));
-
-const html = `<!doctype html>
-<html lang="it"><head><meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Voti di Ramon</title>
-<style>
-:root{--bg:#0f1420;--card:#18202f;--text:#e8ecf3;--muted:#8b95a7;--good:#3ecf8e;--ok:#f5b942;--bad:#ff6b6b}
-@media (prefers-color-scheme: light){:root{--bg:#f4f6fa;--card:#fff;--text:#1a2233;--muted:#667085}}
-body{margin:0;background:var(--bg);color:var(--text);font:16px/1.45 system-ui,sans-serif}
-main{max-width:720px;margin:0 auto;padding:20px 16px 48px}
-h1{font-size:1.5rem;margin:0 0 4px}.muted{color:var(--muted);font-size:.85rem}
-h2{font-size:1.1rem;margin:28px 0 10px}
-.card{background:var(--card);border-radius:12px;padding:14px 16px;margin-bottom:10px}
-details summary{display:flex;justify-content:space-between;cursor:pointer;list-style:none;font-weight:600}
-.avg{font-variant-numeric:tabular-nums}.good{color:var(--good)}.ok{color:var(--ok)}.bad{color:var(--bad)}
-table{width:100%;border-collapse:collapse;margin-top:8px;font-size:.9rem}
-td{padding:6px 0;border-top:1px solid #8882}td:last-child{text-align:right;font-variant-numeric:tabular-nums}
-.avgs{display:flex;gap:14px;font-variant-numeric:tabular-nums}.avgs small{color:var(--muted);font-weight:400;margin-right:3px}
-.sub{border-top:1px solid #8883;padding:10px 0 0 10px;margin-top:10px}.sub summary{font-weight:500}
-.replaced td{text-decoration:line-through;opacity:.5}.total .row{display:flex;justify-content:space-between;font-weight:700}
-summary{gap:10px;align-items:baseline}
-</style></head><body><main>
-<h1>📚 Voti di Ramon</h1>
-<div class="muted">Aggiornato: ${esc(new Date().toLocaleString('it-CH', { timeZone: 'Europe/Zurich' }))}</div>
-
-<h2>Prossime verifiche</h2>
-${upcoming.length ? upcoming.map((e) => `<div class="card">${esc(fmtDate(e.exam_date))} · <b>${esc(subjById[e.subject_id]?.name ?? '')}</b> ${esc(e.title)}</div>`).join('') : '<div class="card muted">Nessuna verifica in programma.</div>'}
-
-${years.map((y) => {
-  const avgs = (r) => `<span class="avgs">${y.semesters.map((s) => `<span><small>S${esc(s)}</small><span class="${color(r.bySem[s])}">${fmtAvg(r.bySem[s])}</span></span>`).join('')}${r.maturita ? '' : `<span><small>Anno</small><span class="${color(r.year)}">${fmtAvg(r.year)}</span></span>`}</span>`;
-  const gradeRows = (list) => list.map((g) => `<tr${g.replaced ? ' class="replaced"' : ''}><td>${esc(fmtDate(g.date))} ${esc(g.description)}${g.recupero ? ' <b>(recupero)</b>' : ''}${weightOf(g) !== 1 ? ` <span class="muted">×${esc(weightOf(g))}</span>` : ''}</td><td class="${color(Number(g.value))}">${esc(g.value)}</td></tr>`).join('');
-  const subjectCard = (r, cls = 'card') => `<details class="${cls}"><summary><span>${esc(r.name)}${r.groupWeight !== undefined && cls === 'sub' && r.groupWeight !== 1 ? ` <span class="muted">×${esc(r.groupWeight)}</span>` : ''}</span>${avgs(r)}</summary><table>${gradeRows(r.list)}</table></details>`;
-  return `<h2>Anno ${esc(y.year)}</h2>
-<div class="card total"><div class="row"><span>Media generale</span>${avgs(y.overall)}</div></div>
-${y.rows.map((r) => (r.children ? `<details class="card"><summary><span>${esc(r.name)} <span class="muted">(gruppo)</span></span>${avgs(r)}</summary>${r.children.map((c) => subjectCard(c, 'sub')).join('')}</details>` : subjectCard(r))).join('')}`;
-}).join('') || '<div class="card muted">Ancora nessun voto.</div>'}
-</main></body></html>`;
+const html = renderPage({ years, upcoming, subjById, weightOf });
 
 mkdirSync('dist', { recursive: true });
 writeFileSync('dist/index.html', html);
