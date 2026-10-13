@@ -8,6 +8,11 @@ on:
     # Daily refresh around 17:00 Swiss time (15:00 and 16:00 UTC cover summer and winter time).
     - cron: '0 15,16 * * *'
   workflow_dispatch:            # "Run workflow" button: always republishes
+    inputs:
+      test_push:
+        description: 'Send a test popup to every signed-up phone'
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -44,6 +49,7 @@ jobs:
         run: node push.mjs plan
         env:
           PAGE_PASSWORD: ${{ secrets.PAGE_PASSWORD }}
+          TEST_PUSH: ${{ inputs.test_push }}
       - name: Decide whether to publish
         id: check
         run: |

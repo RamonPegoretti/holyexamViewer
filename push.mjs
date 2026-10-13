@@ -88,6 +88,10 @@ async function plan(keys) {
     }
   }
 
+  if (process.env.TEST_PUSH === 'true') {
+    messages.push({ title: 'Prova 🔔', body: 'Le notifiche funzionano su questo telefono.', tag: 'prova', url: './' });
+  }
+
   const next = { seen: ids, reminded: [...reminded].slice(-300) };
   const changed = JSON.stringify(next) !== JSON.stringify({ seen: state.seen, reminded: state.reminded ?? [] });
   console.log(`Notifications planned: ${messages.length}.`);
