@@ -106,7 +106,7 @@ const years = Object.entries(groupBy(grades, (g) => g.school_year ?? '?'))
       const c = counted(list);
       const bySem = Object.fromEntries(semesters.map((sem) => [sem, wavg(c.filter((g) => String(g.semester ?? '?') === sem))]));
       return {
-        id, name: s.name, position: s.position, list,
+        id, name: s.name, position: s.position, category: s.category, list,
         groupWeight: s.group_weight === null || s.group_weight === undefined ? 1 : Number(s.group_weight),
         bySem,
         maturita: isMaturita(s),
@@ -122,7 +122,7 @@ const years = Object.entries(groupBy(grades, (g) => g.school_year ?? '?'))
       const groupId = parent ? parent.id : subjById[id]?.is_group ? id : null;
       if (groupId) {
         const g = subjById[groupId];
-        const u = (units[groupId] ??= { id: groupId, name: g.name, position: g.position, children: [] });
+        const u = (units[groupId] ??= { id: groupId, name: g.name, position: g.position, category: g.category, children: [] });
         u.children.push(row);
       } else {
         units[id] = row;
@@ -137,9 +137,11 @@ const years = Object.entries(groupBy(grades, (g) => g.school_year ?? '?'))
       return u;
     });
     // Overall average: plain mean of the top-level units (a group counts as one subject).
+    // 'neutra' subjects (Educazione fisica) do not count.
+    const inOverall = rows.filter((r) => r.category !== 'neutra');
     const overall = {
-      bySem: Object.fromEntries(semesters.map((sem) => [sem, mean(rows.map((r) => r.bySem[sem]))])),
-      year: mean(rows.map((r) => r.year)),
+      bySem: Object.fromEntries(semesters.map((sem) => [sem, mean(inOverall.map((r) => r.bySem[sem]))])),
+      year: mean(inOverall.map((r) => r.year)),
     };
     return { year, semesters, rows, overall };
   });
