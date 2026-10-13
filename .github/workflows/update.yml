@@ -1,0 +1,47 @@
+name: Update grades page
+
+on:
+  schedule:
+    - cron: '17 5-20/3 * * *'   # every 3 hours during the day (UTC)
+  workflow_dispatch:            # "Run workflow" button for manual updates
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - run: npm install
+      - name: Fetch grades
+        run: node fetch.mjs
+        env:
+          HOLYEXAM_EMAIL: ${{ secrets.HOLYEXAM_EMAIL }}
+          HOLYEXAM_PASSWORD: ${{ secrets.HOLYEXAM_PASSWORD }}
+      - name: Password-protect the page
+        run: npx staticrypt dist/index.html -p "$PAGE_PASSWORD" -d dist --short --remember 30 --template-title "Voti di Ramon"
+        env:
+          PAGE_PASSWORD: ${{ secrets.PAGE_PASSWORD }}
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: dist
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4
