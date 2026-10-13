@@ -188,4 +188,7 @@ ${y.rows.map((r) => (r.children ? `<details class="card"><summary><span>${esc(r.
 
 mkdirSync('dist', { recursive: true });
 writeFileSync('dist/index.html', html);
+// The data behind the page (not the timestamp), so the workflow can tell whether anything changed.
+// Kept outside dist/ so it is never published.
+writeFileSync('data.json', JSON.stringify({ grades, subjects, upcoming }));
 console.log(`OK: ${grades.length} grades, ${upcoming.length} upcoming tests.`);

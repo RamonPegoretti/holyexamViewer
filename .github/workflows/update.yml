@@ -2,8 +2,12 @@ name: Update grades page
 
 on:
   schedule:
-    - cron: '17 5-20/3 * * *'   # every 3 hours during the day (UTC)
-  workflow_dispatch:            # "Run workflow" button for manual updates
+    # Check for new grades / finished exams every 30 minutes during the day (UTC).
+    # The page is only republished when something changed.
+    - cron: '*/30 5-20 * * *'
+    # Daily refresh around 17:00 Swiss time (15:00 and 16:00 UTC cover summer and winter time).
+    - cron: '0 15,16 * * *'
+  workflow_dispatch:            # "Run workflow" button: always republishes
 
 permissions:
   contents: read
@@ -12,11 +16,13 @@ permissions:
 
 concurrency:
   group: pages
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 jobs:
   build:
     runs-on: ubuntu-latest
+    outputs:
+      publish: ${{ steps.check.outputs.publish }}
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-node@v5
@@ -28,18 +34,38 @@ jobs:
         env:
           HOLYEXAM_EMAIL: ${{ secrets.HOLYEXAM_EMAIL }}
           HOLYEXAM_PASSWORD: ${{ secrets.HOLYEXAM_PASSWORD }}
-      - name: Password-protect the page
+      - name: Decide whether to publish
+        id: check
         run: |
           test -n "$STATICRYPT_PASSWORD" || { echo "PAGE_PASSWORD secret is missing"; exit 1; }
-          npx staticrypt dist/index.html -d dist --short --remember 30 --template-title "Voti di Ramon"
+          # Keyed hash of the data, so the public version.txt reveals nothing about the grades.
+          version=$(openssl dgst -sha256 -hmac "$STATICRYPT_PASSWORD" -r data.json | cut -d' ' -f1)
+          echo "$version" > version.txt
+          live=$(curl -fsS "https://ramonpegoretti.github.io/holyexamViewer/version.txt" || true)
+          if [ "$GITHUB_EVENT_NAME" = "workflow_dispatch" ]; then reason="manual run"
+          elif [ "$CRON" = "0 15,16 * * *" ]; then reason="daily refresh"
+          elif [ "$version" != "$live" ]; then reason="data changed"
+          else reason=""; fi
+          if [ -n "$reason" ]; then echo "Publishing: $reason"; echo "publish=true" >> "$GITHUB_OUTPUT"
+          else echo "Nothing changed, not publishing."; echo "publish=false" >> "$GITHUB_OUTPUT"; fi
         env:
           STATICRYPT_PASSWORD: ${{ secrets.PAGE_PASSWORD }}
-      - uses: actions/upload-pages-artifact@v3
+          CRON: ${{ github.event.schedule }}
+      - name: Password-protect the page
+        if: steps.check.outputs.publish == 'true'
+        run: |
+          npx staticrypt dist/index.html -d dist --short --remember 0 --template-title "Voti di Ramon"
+          mv version.txt dist/version.txt
+        env:
+          STATICRYPT_PASSWORD: ${{ secrets.PAGE_PASSWORD }}
+      - if: steps.check.outputs.publish == 'true'
+        uses: actions/upload-pages-artifact@v3
         with:
           path: dist
 
   deploy:
     needs: build
+    if: needs.build.outputs.publish == 'true'
     runs-on: ubuntu-latest
     environment:
       name: github-pages
