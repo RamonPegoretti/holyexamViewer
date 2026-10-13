@@ -10,6 +10,18 @@ const fmtDate = (d, opts = { day: '2-digit', month: '2-digit', year: 'numeric' }
   d ? new Date(d).toLocaleDateString('it-CH', { ...opts, timeZone: 'Europe/Zurich' }) : '';
 const color = (v) => (v === null || v === undefined || Number.isNaN(v) ? 'none' : v >= 5 ? 'good' : v >= 4 ? 'ok' : 'bad');
 const fmtAvg = (v) => (v === null || v === undefined ? '–' : v.toFixed(2));
+
+// Swiss (1–6, 4 = sufficient) to Italian (1–10, 6 = sufficient). No official table exists; Ramon picks the rule.
+// 'pass': keeps the pass line (4 → 6, then every half Swiss point is one Italian point; 1 → 1).
+// 'linear': straight line from 1 → 1 to 6 → 10.
+export const CONVERSION = 'pass';
+export const toIt = (ch) =>
+  CONVERSION === 'linear' ? 1 + ((ch - 1) * 9) / 5 : ch >= 4 ? 6 + (ch - 4) * 2 : 1 + ((ch - 1) * 5) / 3;
+const trim = (n) => String(Math.round(n * 100) / 100);
+const nil = (v) => v === null || v === undefined || Number.isNaN(v);
+// Italian value as the main number, Swiss one beside it.
+const dualAvg = (v) => (nil(v) ? '–' : `${toIt(v).toFixed(2)}<small class="ch">${v.toFixed(2)}</small>`);
+const dualGrade = (v) => (nil(v) ? '–' : `${trim(toIt(v))}<small class="ch">${trim(v)}</small>`);
 const cap = (s) => (s ? String(s).charAt(0).toUpperCase() + String(s).slice(1) : '');
 
 const icons = {
@@ -22,25 +34,27 @@ const icons = {
 /**
  * @param {object} d
  * @param {Array} d.years       computed per-year data (newest first)
- * @param {Array} d.upcoming    upcoming exams
+ * @param {Array} d.exams       all exams of my class, oldest first
+ * @param {Array} d.upcoming    exams from today on
+ * @param {Array} d.grades      my grades (to show my grade next to a past exam)
  * @param {object} d.subjById   subjects by id
  * @param {(g: object) => number} d.weightOf
  */
-export function renderPage({ years, upcoming, subjById, weightOf }) {
+export function renderPage({ years, exams, upcoming, grades, subjById, weightOf }) {
   const updated = new Date().toLocaleString('it-CH', { timeZone: 'Europe/Zurich', day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
   const subjName = (id) => subjById[id]?.name ?? 'Altro';
 
-  const badge = (v, big = false) => `<span class="badge ${color(v)}${big ? ' big' : ''}">${fmtAvg(v)}</span>`;
+  const badge = (v, big = false) => `<span class="badge ${color(v)}${big ? ' big' : ''}">${dualAvg(v)}</span>`;
   const chips = (r, semesters) =>
-    `<div class="chips">${semesters.map((s) => `<span class="chip"><small>S${esc(s)}</small> <b class="${color(r.bySem[s])}">${fmtAvg(r.bySem[s])}</b></span>`).join('')}${
-      r.maturita ? '<span class="chip tag">Maturità</span>' : `<span class="chip"><small>Anno</small> <b class="${color(r.year)}">${fmtAvg(r.year)}</b></span>`
+    `<div class="chips">${semesters.map((s) => `<span class="chip"><small>S${esc(s)}</small> <b class="${color(r.bySem[s])}">${dualAvg(r.bySem[s])}</b></span>`).join('')}${
+      r.maturita ? '<span class="chip tag">Maturità</span>' : `<span class="chip"><small>Anno</small> <b class="${color(r.year)}">${dualAvg(r.year)}</b></span>`
     }</div>`;
 
   // The average that matters right now: current semester for maturità subjects, whole year otherwise.
   const mainAvg = (r, lastSem) => (r.maturita ? r.bySem[lastSem] : r.year);
 
   const gradeItem = (g, withSubject = false) => `<li class="grade${g.replaced ? ' replaced' : ''}">
-  <span class="gval ${color(Number(g.value))}">${esc(g.value)}</span>
+  <span class="gval ${color(Number(g.value))}">${dualGrade(Number(g.value))}</span>
   <span class="gtext"><b>${withSubject ? esc(subjName(g.subject_id)) : esc(g.description || 'Voto')}</b>
   <small>${withSubject && g.description ? esc(g.description) + ' · ' : ''}${esc(fmtDate(g.date))}${weightOf(g) !== 1 ? ` · peso ${esc(weightOf(g))}` : ''}${g.recupero ? ' · <em>recupero</em>' : ''}${g.replaced ? ' · sostituito dal recupero' : ''}</small></span>
 </li>`;
@@ -52,7 +66,7 @@ export function renderPage({ years, upcoming, subjById, weightOf }) {
     return `<div class="calc" data-sum="${sum}" data-w="${w}">
   <div class="calc-title">Quanto serve al prossimo voto?</div>
   <div class="calc-row">
-    <label>Media voluta <select class="c-target">${[4, 4.5, 5, 5.5, 6].map((t) => `<option${t === 4 ? ' selected' : ''}>${t.toFixed(1)}</option>`).join('')}</select></label>
+    <label>Media voluta <select class="c-target">${[4, 4.5, 5, 5.5, 6].map((t) => `<option value="${t}"${t === 4 ? ' selected' : ''}>${trim(toIt(t))} (CH ${t.toFixed(1)})</option>`).join('')}</select></label>
     <label>Peso <select class="c-weight">${[0.5, 1, 2, 3].map((t) => `<option${t === 1 ? ' selected' : ''}>${t}</option>`).join('')}</select></label>
   </div>
   <div class="c-out"></div>
@@ -86,24 +100,33 @@ export function renderPage({ years, upcoming, subjById, weightOf }) {
     return yearBlock(y, `
 <div class="hero">
   <div class="hero-label">Media generale · semestre ${esc(y.lastSem)}</div>
-  <div class="hero-value ${color(main)}">${fmtAvg(main)}</div>
+  <div class="hero-value ${color(main)}" data-it="${nil(main) ? '' : toIt(main)}">${nil(main) ? '–' : toIt(main).toFixed(2)}</div>
+  <div class="hero-ch">${nil(main) ? '' : `Svizzero: ${main.toFixed(2)}`}</div>
   ${chips({ ...y.overall, maturita: false }, y.semesters)}
 </div>
 <div class="stats">
   <div class="stat"><b>${yearGrades.length}</b><small>voti</small></div>
   <div class="stat"><b class="${insuff.length ? 'bad' : 'good'}">${insuff.length}</b><small>insufficienze</small></div>
-  <div class="stat"><b class="${color(best ? mainAvg(best, y.lastSem) : null)}">${best ? fmtAvg(mainAvg(best, y.lastSem)) : '–'}</b><small>${best ? esc(best.name) : 'migliore'}</small></div>
+  <div class="stat"><b class="${color(best ? mainAvg(best, y.lastSem) : null)}">${best ? dualAvg(mainAvg(best, y.lastSem)) : '–'}</b><small>${best ? esc(best.name) : 'migliore'}</small></div>
 </div>
-${insuff.length ? `<div class="card warn"><b>Da recuperare:</b> ${insuff.map((r) => `${esc(r.name)} (${fmtAvg(mainAvg(r, y.lastSem))})`).join(', ')}</div>` : ''}
+${insuff.length ? `<div class="card warn"><b>Da recuperare:</b> ${insuff.map((r) => `${esc(r.name)} (${toIt(mainAvg(r, y.lastSem)).toFixed(2)} · CH ${fmtAvg(mainAvg(r, y.lastSem))})`).join(', ')}</div>` : ''}
 <h2>Ultimi voti</h2>
 ${yearGrades.length ? `<ul class="grades card">${yearGrades.slice(0, 5).map((g) => gradeItem(g, true)).join('')}</ul><a class="more" href="#voti">Tutti i voti →</a>` : '<div class="card muted">Ancora nessun voto.</div>'}`);
   }).join('');
 
-  const examItem = (e) => `<li class="exam" data-date="${esc(e.exam_date)}">
-  <div class="edate"><b>${esc(fmtDate(e.exam_date, { day: 'numeric' }))}</b><small>${esc(fmtDate(e.exam_date, { weekday: 'short' }))}</small></div>
-  <div class="etext"><b>${esc(subjName(e.subject_id))}</b><small>${esc(e.title)}${e.kind ? ` · ${esc(cap(e.kind))}` : ''}</small></div>
-  <span class="countdown"></span>
+  // My grade for an exam: the recupero if there is one, otherwise the grade that still counts.
+  const gradeByExam = {};
+  for (const g of grades) if (g.exam_id && !g.replaced && (!gradeByExam[g.exam_id] || g.recupero)) gradeByExam[g.exam_id] = g;
+  const monthKey = (d) => String(d).slice(0, 7);
+
+  const examItem = (e) => {
+    const g = gradeByExam[e.id];
+    return `<li class="exam" data-date="${esc(e.exam_date)}" data-subject="${esc(e.subject_id)}" data-month="${esc(monthKey(e.exam_date))}">
+  <div class="edate"><b>${esc(fmtDate(e.exam_date, { day: 'numeric' }))}</b><small>${esc(fmtDate(e.exam_date, { month: 'short' }))}</small></div>
+  <div class="etext"><b>${esc(subjName(e.subject_id))}</b><small>${esc(cap(fmtDate(e.exam_date, { weekday: 'long' })))} · ${esc(e.title)}${e.kind ? ` · ${esc(cap(e.kind))}` : ''}</small></div>
+  ${g ? `<span class="gval ${color(Number(g.value))}">${dualGrade(Number(g.value))}</span>` : '<span class="countdown"></span>'}
 </li>`;
+  };
 
   const nextExam = upcoming[0]
     ? `<h2>Prossima verifica</h2><ul class="exams card">${examItem(upcoming[0])}</ul>`
@@ -111,15 +134,22 @@ ${yearGrades.length ? `<ul class="grades card">${yearGrades.slice(0, 5).map((g) 
 
   // ---------- Materie ----------
   const materie = years.map((y) => yearBlock(y, `
-<div class="legend muted">Il numero a destra è la media dell'anno; per le materie di maturità è la media del semestre ${esc(y.lastSem)} (ogni semestre conta come voto finale).</div>
+<div class="legend muted">Voti in scala italiana (1–10), quello piccolo grigio è il voto svizzero (1–6). Il numero a destra è la media dell'anno; per le materie di maturità è la media del semestre ${esc(y.lastSem)} (ogni semestre conta come voto finale).</div>
 ${y.rows.map((r) => (r.children ? groupCard(r, y) : subjectCard(r, y))).join('')}`)).join('');
 
   // ---------- Verifiche ----------
-  const byMonth = {};
-  for (const e of upcoming) (byMonth[fmtDate(e.exam_date, { month: 'long', year: 'numeric' })] ??= []).push(e);
-  const verifiche = upcoming.length
-    ? Object.entries(byMonth).map(([m, list]) => `<h2>${esc(cap(m))}</h2><ul class="exams card">${list.map(examItem).join('')}</ul>`).join('')
-    : '<div class="card muted">Nessuna verifica in programma.</div>';
+  // Every exam is rendered once; the page sorts them into "In arrivo" / "Passate" when opened and filters them.
+  const examSubjects = [...new Set(exams.map((e) => e.subject_id))].map((id) => ({ id, name: subjName(id), position: subjById[id]?.position })).sort((a, b) => (a.position ?? 999) - (b.position ?? 999) || a.name.localeCompare(b.name));
+  const examMonths = [...new Set(exams.map((e) => monthKey(e.exam_date)))].sort();
+  const verifiche = exams.length
+    ? `<div class="seg" role="tablist"><button data-when="future" class="on">In arrivo</button><button data-when="past">Passate</button></div>
+<div class="filters">
+  <select id="f-subject"><option value="">Tutte le materie</option>${examSubjects.map((s) => `<option value="${esc(s.id)}">${esc(s.name)}</option>`).join('')}</select>
+  <select id="f-month"><option value="">Tutti i mesi</option>${examMonths.map((m) => `<option value="${esc(m)}">${esc(cap(fmtDate(m + '-15', { month: 'long', year: 'numeric' })))}</option>`).join('')}</select>
+</div>
+<ul class="exams card" id="exam-list">${exams.map(examItem).join('')}</ul>
+<div class="card muted" id="exam-empty" hidden>Nessuna verifica con questi filtri.</div>`
+    : '<div class="card muted">Nessuna verifica.</div>';
 
   // ---------- Voti ----------
   const voti = years.map((y) => {
@@ -178,7 +208,7 @@ ul.grades,ul.exams{list-style:none;margin:0;padding:0}
 ul.grades.card,ul.exams.card{padding:4px 14px}
 .subject ul.grades{margin-top:10px}
 .grade,.exam{display:flex;align-items:center;gap:12px;padding:9px 0;border-top:1px solid var(--line)}
-.grade:first-child,.exam:first-child{border-top:0}
+.grade:first-child,.exam:first-child,#exam-list .exam{border-top:0}#exam-list .exam:not(.first){border-top:1px solid var(--line)}
 .gval{min-width:2.4em;font-weight:800;font-size:1.1rem;text-align:center;font-variant-numeric:tabular-nums}
 .gtext,.etext{display:flex;flex-direction:column;min-width:0;flex:1}.gtext small,.etext small{color:var(--muted);font-size:.8rem}
 .replaced{opacity:.45}.replaced .gval{text-decoration:line-through}
@@ -203,6 +233,14 @@ section.active{animation:fadein .25s ease}
 @keyframes fadein{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
 nav a.active svg{filter:drop-shadow(0 0 6px rgba(124,156,255,.7))}
 @media (prefers-reduced-motion:reduce){.hero::before,section.active{animation:none}}
+.seg{display:grid;grid-template-columns:1fr 1fr;background:var(--card);border:1px solid var(--line);border-radius:12px;padding:4px;margin-bottom:10px}
+.seg button{background:none;border:0;color:var(--muted);font:inherit;font-weight:600;padding:8px;border-radius:9px;cursor:pointer}
+.seg button.on{background:linear-gradient(135deg,#7c9cff,#a77bff);color:#fff}
+.filters{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:10px}.filters select{width:100%;min-width:0}
+.exam li,.exam .gval{flex:none}
+.ch{font-size:.62em;color:var(--muted);font-weight:500;margin-left:4px}
+.gval{display:flex;align-items:baseline;justify-content:center;min-width:3.4em}
+.hero-ch{color:var(--muted);font-size:.85rem;margin:-6px 0 10px}
 nav{position:fixed;bottom:0;left:0;right:0;z-index:5;background:rgba(16,21,32,.95);backdrop-filter:blur(10px);border-top:1px solid var(--line);padding-bottom:env(safe-area-inset-bottom)}
 nav .nwrap{max-width:720px;margin:0 auto;display:grid;grid-template-columns:repeat(4,1fr)}
 nav a{display:flex;flex-direction:column;align-items:center;gap:2px;padding:8px 0 10px;color:var(--muted);text-decoration:none;font-size:.72rem}
@@ -237,25 +275,56 @@ ${views.map(([id, , content]) => `<section id="v-${id}" data-view="${id}">${cont
 
   // Count up the big average once, for a bit of fun.
   document.querySelectorAll('.hero-value').forEach(function (el) {
-    var end = parseFloat(el.textContent); if (isNaN(end)) return;
+    var end = parseFloat(el.dataset.it); if (isNaN(end)) return;
     var t0 = null;
     function step(t) { t0 = t0 || t; var k = Math.min(1, (t - t0) / 700); el.textContent = (end * (1 - Math.pow(1 - k, 3))).toFixed(2); if (k < 1) requestAnimationFrame(step); }
     requestAnimationFrame(step);
   });
 
-  // Countdown to each exam, computed when the page is opened.
+  // Countdown to each exam, computed when the page is opened; past exams move to "Passate".
   var today = new Date(); today.setHours(0, 0, 0, 0);
   document.querySelectorAll('.exam').forEach(function (e) {
     var p = e.dataset.date.slice(0, 10).split('-');
-    var d = new Date(+p[0], p[1] - 1, +p[2]);
-    var n = Math.round((d - today) / 86400000);
+    var n = Math.round((new Date(+p[0], p[1] - 1, +p[2]) - today) / 86400000);
+    e.dataset.when = n < 0 ? 'past' : 'future';
     var c = e.querySelector('.countdown');
-    c.textContent = n < 0 ? 'passata' : n === 0 ? 'oggi' : n === 1 ? 'domani' : 'tra ' + n + ' giorni';
-    if (n >= 0 && n <= 3) c.classList.add('soon');
-    if (n < 0) e.style.display = 'none';
+    if (c) {
+      c.textContent = n < 0 ? 'passata' : n === 0 ? 'oggi' : n === 1 ? 'domani' : 'tra ' + n + ' giorni';
+      if (n >= 0 && n <= 3) c.classList.add('soon');
+    }
+    if (n < 0 && !e.closest('#exam-list')) e.style.display = 'none';
   });
 
-  // Grade needed on the next test to reach the chosen average (scale 1–6).
+  // Verifiche filters: upcoming/past, subject, month.
+  var list = document.getElementById('exam-list');
+  if (list) {
+    var when = 'future', fs = document.getElementById('f-subject'), fm = document.getElementById('f-month');
+    var items = Array.prototype.slice.call(list.children);
+    function filter() {
+      // Past exams newest first, upcoming soonest first.
+      items.slice().sort(function (a, b) { return when === 'past' ? b.dataset.date.localeCompare(a.dataset.date) : a.dataset.date.localeCompare(b.dataset.date); })
+        .forEach(function (li) { list.appendChild(li); });
+      var shown = 0;
+      items.forEach(function (li) {
+        var ok = li.dataset.when === when && (!fs.value || li.dataset.subject === fs.value) && (!fm.value || li.dataset.month === fm.value);
+        li.style.display = ok ? '' : 'none'; li.classList.toggle('first', ok && !shown); if (ok) shown++;
+      });
+      list.hidden = !shown; document.getElementById('exam-empty').hidden = !!shown;
+    }
+    document.querySelectorAll('.seg button').forEach(function (b) {
+      b.addEventListener('click', function () {
+        when = b.dataset.when;
+        document.querySelectorAll('.seg button').forEach(function (x) { x.classList.toggle('on', x === b); });
+        filter();
+      });
+    });
+    fs.addEventListener('change', filter); fm.addEventListener('change', filter);
+    filter();
+  }
+
+  var CONVERSION = ${JSON.stringify(CONVERSION)};
+  var toIt = ${toIt.toString()};
+  // Grade needed on the next test to reach the chosen average (computed on the Swiss scale, shown in both).
   document.querySelectorAll('.calc').forEach(function (c) {
     var sum = +c.dataset.sum, w = +c.dataset.w, out = c.querySelector('.c-out');
     function calc() {
@@ -263,7 +332,7 @@ ${views.map(([id, , content]) => `<section id="v-${id}" data-view="${id}">${cont
       var need = (t * (w + nw) - sum) / nw;
       if (need <= 1) out.innerHTML = '<b class="good">Già raggiunta</b>, basta qualsiasi voto.';
       else if (need > 6) out.innerHTML = '<b class="bad">Non raggiungibile</b> con un solo voto.';
-      else out.innerHTML = 'Serve almeno <b class="' + (need >= 5 ? 'bad' : need >= 4 ? 'ok' : 'good') + '">' + (Math.ceil(need * 4) / 4).toFixed(2) + '</b>';
+      else { var ch = Math.ceil(need * 4) / 4; out.innerHTML = 'Serve almeno <b class="' + (need >= 5 ? 'bad' : need >= 4 ? 'ok' : 'good') + '">' + (Math.round(toIt(ch) * 100) / 100) + '</b> <small class="muted">(CH ' + ch.toFixed(2) + ')</small>'; }
     }
     c.querySelectorAll('select').forEach(function (s) { s.addEventListener('change', calc); });
     calc();

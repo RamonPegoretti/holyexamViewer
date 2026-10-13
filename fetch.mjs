@@ -52,16 +52,17 @@ const subjects = classIds.length
   ? await run(sb.from('subjects').select('id, name, class_id, position, category, period, is_group, parent_id, group_weight').in('class_id', classIds), 'class subjects')
   : gradedSubjects;
 const today = new Date().toISOString().slice(0, 10);
-const upcoming = classIds.length
+// All tests of my class(es), past and upcoming.
+const exams = classIds.length
   ? await run(
       sb.from('exams')
-        .select('title, exam_date, subject_id, kind')
+        .select('id, title, exam_date, subject_id, kind')
         .in('class_id', classIds)
-        .gte('exam_date', today)
         .order('exam_date'),
       'exams'
     )
   : [];
+const upcoming = exams.filter((e) => String(e.exam_date).slice(0, 10) >= today);
 
 await sb.auth.signOut();
 
@@ -145,11 +146,11 @@ const years = Object.entries(groupBy(grades, (g) => g.school_year ?? '?'))
     return { year, semesters, lastSem, rows, overall };
   });
 
-const html = renderPage({ years, upcoming, subjById, weightOf });
+const html = renderPage({ years, exams, upcoming, grades, subjById, weightOf });
 
 mkdirSync('dist', { recursive: true });
 writeFileSync('dist/index.html', html);
 // The data behind the page (not the timestamp), so the workflow can tell whether anything changed.
 // Kept outside dist/ so it is never published.
-writeFileSync('data.json', JSON.stringify({ grades, subjects, upcoming }));
-console.log(`OK: ${grades.length} grades, ${upcoming.length} upcoming tests.`);
+writeFileSync('data.json', JSON.stringify({ grades, subjects, exams }));
+console.log(`OK: ${grades.length} grades, ${exams.length} tests (${upcoming.length} upcoming).`);
