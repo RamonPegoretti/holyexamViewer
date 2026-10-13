@@ -4,6 +4,7 @@ import { readFileSync } from 'node:fs';
 
 const logo = readFileSync(new URL('./logo.svg', import.meta.url), 'utf8').replace(/\s*\n\s*/g, '');
 const favicon = 'data:image/svg+xml,' + encodeURIComponent(logo);
+const chartsJs = readFileSync(new URL('./charts.client.js', import.meta.url), 'utf8');
 
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const fmtDate = (d, opts = { day: '2-digit', month: '2-digit', year: 'numeric' }) =>
@@ -28,6 +29,7 @@ const icons = {
   home: '<svg viewBox="0 0 24 24"><path d="M3 11.5 12 4l9 7.5V20a1 1 0 0 1-1 1h-5v-6H9v6H4a1 1 0 0 1-1-1z"/></svg>',
   materie: '<svg viewBox="0 0 24 24"><path d="M5 4h11a3 3 0 0 1 3 3v13H8a3 3 0 0 1-3-3zM5 17a3 3 0 0 1 3-3h11"/></svg>',
   verifiche: '<svg viewBox="0 0 24 24"><path d="M4 6a2 2 0 0 1 2-2h12a2 2 0 0 1 2 2v13a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2zM4 10h16M9 2v4M15 2v4"/></svg>',
+  grafici: '<svg viewBox="0 0 24 24"><path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/></svg>',
   voti: '<svg viewBox="0 0 24 24"><path d="M5 5h14M5 12h14M5 19h9"/></svg>',
 };
 
@@ -74,30 +76,39 @@ export function renderPage({ years, exams, upcoming, grades, subjById, weightOf 
 </div>`;
   };
 
-  const subjectCard = (r, y, nested = false) => `<details class="subject${nested ? ' nested' : ''}">
-  <summary><span class="sname">${esc(r.name)}${nested && r.groupWeight !== 1 ? ` <small class="muted">peso ${esc(r.groupWeight)}</small>` : ''}</span>${badge(mainAvg(r, y.lastSem))}</summary>
+  const danger = (r, y) => r.category !== 'neutra' && !nil(mainAvg(r, y.lastSem)) && mainAvg(r, y.lastSem) < 4;
+  const dangerPill = '<span class="pill">sotto il 6</span>';
+  const subjectCard = (r, y, nested = false) => `<details class="subject${nested ? ' nested' : ''}${danger(r, y) ? ' danger' : ''}">
+  <summary><span class="sname">${esc(r.name)}${danger(r, y) ? dangerPill : ''}${nested && r.groupWeight !== 1 ? ` <small class="muted">peso ${esc(r.groupWeight)}</small>` : ''}</span>${badge(mainAvg(r, y.lastSem))}</summary>
   ${chips(r, y.semesters)}
   <ul class="grades">${r.list.map((g) => gradeItem(g)).join('')}</ul>
   ${calculator(r, y)}
 </details>`;
 
-  const groupCard = (r, y) => `<details class="subject group">
-  <summary><span class="sname">${esc(r.name)} <small class="muted">gruppo</small></span>${badge(mainAvg(r, y.lastSem))}</summary>
+  const groupCard = (r, y) => `<details class="subject group${danger(r, y) ? ' danger' : ''}">
+  <summary><span class="sname">${esc(r.name)} <small class="muted">gruppo</small>${danger(r, y) ? dangerPill : ''}</span>${badge(mainAvg(r, y.lastSem))}</summary>
   ${chips(r, y.semesters)}
   ${r.children.map((c) => subjectCard(c, y, true)).join('')}
 </details>`;
 
+  // Subjects below 6, including subjects inside a group whose group average is still fine.
+  const alertsFor = (y) => [
+    ...y.rows.filter((r) => danger(r, y)),
+    ...y.rows.filter((r) => r.children && !danger(r, y)).flatMap((r) => r.children.filter((c) => danger(c, y)).map((c) => ({ ...c, group: r.name }))),
+  ];
   const yearBlock = (y, content) => `<div class="year" data-year="${esc(y.year)}">${content}</div>`;
 
   // ---------- Home ----------
   const home = years.map((y) => {
     const all = y.rows.flatMap((r) => (r.children ? r.children : [r]));
     const graded = y.rows.filter((r) => r.category !== 'neutra' && mainAvg(r, y.lastSem) !== null);
-    const insuff = graded.filter((r) => mainAvg(r, y.lastSem) < 4);
+    const alerts = alertsFor(y);
     const best = [...graded].sort((a, b) => mainAvg(b, y.lastSem) - mainAvg(a, y.lastSem))[0];
     const yearGrades = all.flatMap((r) => r.list).sort((a, b) => String(b.date).localeCompare(String(a.date)));
     const main = y.overall.bySem[y.lastSem];
     return yearBlock(y, `
+${alerts.length ? `<a class="alert" href="#materie"><span class="alert-icon">!</span><span><b>${alerts.length === 1 ? '1 materia sotto il 6' : `${alerts.length} materie sotto il 6`}</b>
+${alerts.map((r) => `<small>${esc(r.name)}${r.group ? ` (in ${esc(r.group)})` : ''}: ${toIt(mainAvg(r, y.lastSem)).toFixed(2)} · CH ${fmtAvg(mainAvg(r, y.lastSem))}</small>`).join('')}</span></a>` : ''}
 <div class="hero">
   <div class="hero-label">Media generale · semestre ${esc(y.lastSem)}</div>
   <div class="hero-value ${color(main)}" data-it="${nil(main) ? '' : toIt(main)}">${nil(main) ? '–' : toIt(main).toFixed(2)}</div>
@@ -106,10 +117,9 @@ export function renderPage({ years, exams, upcoming, grades, subjById, weightOf 
 </div>
 <div class="stats">
   <div class="stat"><b>${yearGrades.length}</b><small>voti</small></div>
-  <div class="stat"><b class="${insuff.length ? 'bad' : 'good'}">${insuff.length}</b><small>insufficienze</small></div>
+  <div class="stat"><b class="${alerts.length ? 'bad' : 'good'}">${alerts.length}</b><small>sotto il 6</small></div>
   <div class="stat"><b class="${color(best ? mainAvg(best, y.lastSem) : null)}">${best ? dualAvg(mainAvg(best, y.lastSem)) : '–'}</b><small>${best ? esc(best.name) : 'migliore'}</small></div>
 </div>
-${insuff.length ? `<div class="card warn"><b>Da recuperare:</b> ${insuff.map((r) => `${esc(r.name)} (${toIt(mainAvg(r, y.lastSem)).toFixed(2)} · CH ${fmtAvg(mainAvg(r, y.lastSem))})`).join(', ')}</div>` : ''}
 <h2>Ultimi voti</h2>
 ${yearGrades.length ? `<ul class="grades card">${yearGrades.slice(0, 5).map((g) => gradeItem(g, true)).join('')}</ul><a class="more" href="#voti">Tutti i voti →</a>` : '<div class="card muted">Ancora nessun voto.</div>'}`);
   }).join('');
@@ -157,6 +167,18 @@ ${y.rows.map((r) => (r.children ? groupCard(r, y) : subjectCard(r, y))).join('')
     return yearBlock(y, list.length ? `<ul class="grades card">${list.map((g) => gradeItem(g, true)).join('')}</ul>` : '<div class="card muted">Ancora nessun voto.</div>');
   }).join('');
 
+  // ---------- Grafici (drawn in the browser from this data) ----------
+  const chartData = years.map((y) => {
+    const leaves = y.rows.flatMap((r) => (r.children ? r.children : [r]));
+    return {
+      year: String(y.year), lastSem: y.lastSem, semesters: y.semesters,
+      units: y.rows.map((r) => ({ id: String(r.id), name: r.name, maturita: !!r.maturita, neutra: r.category === 'neutra', children: r.children ? r.children.map((c) => ({ id: String(c.id), w: c.groupWeight })) : null })),
+      leaves: leaves.map((l) => ({ id: String(l.id), name: l.name })),
+      grades: leaves.flatMap((l) => l.list.filter((g) => !g.replaced).map((g) => ({ d: String(g.date).slice(0, 10), v: Number(g.value), w: weightOf(g), s: String(l.id), sem: String(g.semester ?? '?'), t: g.description || '' }))),
+    };
+  });
+  const dangerCount = years[0] ? alertsFor(years[0]).length : 0;
+
   const yearSelect = years.length > 1
     ? `<select id="year">${years.map((y) => `<option value="${esc(y.year)}">${esc(y.year)}</option>`).join('')}</select>`
     : years.length ? `<span class="muted">${esc(years[0].year)}</span>` : '';
@@ -164,6 +186,7 @@ ${y.rows.map((r) => (r.children ? groupCard(r, y) : subjectCard(r, y))).join('')
   const views = [
     ['home', 'Home', `${home || '<div class="card muted">Ancora nessun voto.</div>'}${nextExam}`],
     ['materie', 'Materie', materie || '<div class="card muted">Ancora nessun voto.</div>'],
+    ['grafici', 'Grafici', '<div id="charts"></div>'],
     ['verifiche', 'Verifiche', verifiche],
     ['voti', 'Voti', voti || '<div class="card muted">Ancora nessun voto.</div>'],
   ];
@@ -174,6 +197,12 @@ ${y.rows.map((r) => (r.children ? groupCard(r, y) : subjectCard(r, y))).join('')
 <meta name="color-scheme" content="dark"><meta name="theme-color" content="#0b0f17">
 <title>Voti di Ramon</title>
 <link rel="icon" href="${favicon}">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Voti">
 <style>
 :root{--bg:#0b0f17;--card:#161d2b;--card2:#1d2638;--line:#263046;--text:#e8ecf3;--muted:#8b95a7;--accent:#7c9cff;--good:#3ecf8e;--ok:#f5b942;--bad:#ff6b6b}
 *{box-sizing:border-box}
@@ -241,8 +270,22 @@ nav a.active svg{filter:drop-shadow(0 0 6px rgba(124,156,255,.7))}
 .ch{font-size:.62em;color:var(--muted);font-weight:500;margin-left:4px}
 .gval{display:flex;align-items:baseline;justify-content:center;min-width:3.4em}
 .hero-ch{color:var(--muted);font-size:.85rem;margin:-6px 0 10px}
+.alert{display:flex;gap:12px;align-items:flex-start;text-decoration:none;color:var(--text);background:linear-gradient(135deg,#3a1418,#2a1719);border:1px solid #6b2a30;border-radius:14px;padding:12px 14px;margin-bottom:12px;animation:pulse 2.4s ease-in-out infinite}
+.alert span:last-child{display:flex;flex-direction:column;gap:2px}.alert small{color:#ffb3b3}
+.alert-icon{flex:none;width:26px;height:26px;border-radius:50%;background:var(--bad);color:#2a0d10;font-weight:900;display:grid;place-items:center}
+@keyframes pulse{50%{box-shadow:0 0 0 4px rgba(255,107,107,.12)}}
+.subject.danger{border-color:#6b2a30}.pill{margin-left:8px;font-size:.68rem;font-weight:700;color:#2a0d10;background:var(--bad);border-radius:999px;padding:2px 7px;vertical-align:middle}
+nav a{position:relative}.nbadge{position:absolute;top:4px;left:calc(50% + 6px);background:var(--bad);color:#2a0d10;font-size:.65rem;font-weight:800;border-radius:999px;min-width:16px;height:16px;display:grid;place-items:center;padding:0 4px}
+.chart-filters{display:grid;grid-template-columns:1fr;gap:8px;margin-bottom:10px}.chart-filters select{width:100%}
+.seg.small{display:flex;margin:0}.seg.small button{flex:1}
+.chart-card{padding:14px 12px 8px}.chart-title{font-weight:700}.chart-note{color:var(--muted);font-size:.8rem;margin:2px 0 8px}
+svg.chart{width:100%;height:auto;display:block;overflow:visible;touch-action:pan-y}
+svg.chart text{font:11px system-ui,-apple-system,sans-serif}svg.chart .ax{fill:var(--muted)}svg.chart .ax.small{font-size:9px}svg.chart .six{fill:var(--text);font-weight:700}
+svg.chart .lb{fill:var(--text);font-size:12px}svg.chart .val{fill:var(--text);font-weight:700}
+.tip{position:fixed;z-index:20;background:#0b0f17;border:1px solid var(--line);color:var(--text);border-radius:8px;padding:6px 9px;font-size:.8rem;pointer-events:none;box-shadow:0 6px 20px rgba(0,0,0,.5);max-width:240px}
+@media (prefers-reduced-motion:reduce){.alert{animation:none}}
 nav{position:fixed;bottom:0;left:0;right:0;z-index:5;background:rgba(16,21,32,.95);backdrop-filter:blur(10px);border-top:1px solid var(--line);padding-bottom:env(safe-area-inset-bottom)}
-nav .nwrap{max-width:720px;margin:0 auto;display:grid;grid-template-columns:repeat(4,1fr)}
+nav .nwrap{max-width:720px;margin:0 auto;display:grid;grid-template-columns:repeat(5,1fr)}
 nav a{display:flex;flex-direction:column;align-items:center;gap:2px;padding:8px 0 10px;color:var(--muted);text-decoration:none;font-size:.72rem}
 nav a.active{color:var(--accent)}
 nav svg{width:24px;height:24px;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
@@ -251,7 +294,7 @@ nav svg{width:24px;height:24px;fill:none;stroke:currentColor;stroke-width:1.8;st
 <main>
 ${views.map(([id, , content]) => `<section id="v-${id}" data-view="${id}">${content}</section>`).join('\n')}
 </main>
-<nav><div class="nwrap">${views.map(([id, label]) => `<a href="#${id}" data-nav="${id}">${icons[id]}${label}</a>`).join('')}</div></nav>
+<nav><div class="nwrap">${views.map(([id, label]) => `<a href="#${id}" data-nav="${id}">${icons[id]}${label}${id === 'materie' && dangerCount ? `<span class="nbadge">${dangerCount}</span>` : ''}</a>`).join('')}</div></nav>
 <script>
 (function () {
   var views = ${JSON.stringify(views.map(([id]) => id))};
@@ -339,5 +382,7 @@ ${views.map(([id, , content]) => `<section id="v-${id}" data-view="${id}">${cont
   });
 })();
 </script>
+<script type="application/json" id="chart-data">${JSON.stringify(chartData).replace(/</g, '\\u003c')}</script>
+<script>${chartsJs}</script>
 </body></html>`;
 }
