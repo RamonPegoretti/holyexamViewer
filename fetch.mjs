@@ -87,7 +87,8 @@ const recuperoExams = new Set(grades.filter((g) => g.recupero && g.exam_id).map(
 for (const g of grades) g.replaced = !g.recupero && recuperoExams.has(g.exam_id);
 const counted = (list) => list.filter((g) => !g.replaced);
 
-// Maturità subjects: the full-year average uses only 2nd-semester grades.
+// Maturità subjects: each semester is a final grade of its own, so no year average is shown;
+// in the yearly Media generale they count with their last-semester average only.
 // TODO: how a subject is marked as maturità is not known yet; until then every subject uses all grades.
 const isMaturita = (subject) => false;
 
@@ -113,6 +114,7 @@ const years = Object.entries(groupBy(grades, (g) => g.school_year ?? '?'))
         id, name: s.name, position: s.position, list,
         groupWeight: s.group_weight === null || s.group_weight === undefined ? 1 : Number(s.group_weight),
         bySem,
+        maturita: isMaturita(s),
         year: isMaturita(s) ? bySem[lastSem] ?? null : wavg(c),
       };
     };
@@ -136,6 +138,7 @@ const years = Object.entries(groupBy(grades, (g) => g.school_year ?? '?'))
       u.children.sort(bySort);
       u.bySem = Object.fromEntries(semesters.map((sem) => [sem, groupAvg(u.children, (c) => c.bySem[sem])]));
       u.year = groupAvg(u.children, (c) => c.year);
+      u.maturita = u.children.every((c) => c.maturita);
       return u;
     });
     // Overall average: plain mean of the top-level units (a group counts as one subject).
@@ -177,8 +180,8 @@ summary{gap:10px;align-items:baseline}
 ${upcoming.length ? upcoming.map((e) => `<div class="card">${esc(fmtDate(e.exam_date))} · <b>${esc(subjById[e.subject_id]?.name ?? '')}</b> ${esc(e.title)}</div>`).join('') : '<div class="card muted">Nessuna verifica in programma.</div>'}
 
 ${years.map((y) => {
-  const avgs = (r) => `<span class="avgs">${y.semesters.map((s) => `<span><small>S${esc(s)}</small><span class="${color(r.bySem[s])}">${fmtAvg(r.bySem[s])}</span></span>`).join('')}<span><small>Anno</small><span class="${color(r.year)}">${fmtAvg(r.year)}</span></span></span>`;
-  const gradeRows = (list) => list.map((g) => `<tr${g.replaced ? ' class="replaced"' : ''}><td>${esc(fmtDate(g.date))} ${esc(g.description)} <span class="muted">S${esc(g.semester ?? '?')}</span>${g.recupero ? ' <b>(recupero)</b>' : ''}${weightOf(g) !== 1 ? ` <span class="muted">×${esc(weightOf(g))}</span>` : ''}</td><td class="${color(Number(g.value))}">${esc(g.value)}</td></tr>`).join('');
+  const avgs = (r) => `<span class="avgs">${y.semesters.map((s) => `<span><small>S${esc(s)}</small><span class="${color(r.bySem[s])}">${fmtAvg(r.bySem[s])}</span></span>`).join('')}${r.maturita ? '' : `<span><small>Anno</small><span class="${color(r.year)}">${fmtAvg(r.year)}</span></span>`}</span>`;
+  const gradeRows = (list) => list.map((g) => `<tr${g.replaced ? ' class="replaced"' : ''}><td>${esc(fmtDate(g.date))} ${esc(g.description)}${g.recupero ? ' <b>(recupero)</b>' : ''}${weightOf(g) !== 1 ? ` <span class="muted">×${esc(weightOf(g))}</span>` : ''}</td><td class="${color(Number(g.value))}">${esc(g.value)}</td></tr>`).join('');
   const subjectCard = (r, cls = 'card') => `<details class="${cls}"><summary><span>${esc(r.name)}${r.groupWeight !== undefined && cls === 'sub' && r.groupWeight !== 1 ? ` <span class="muted">×${esc(r.groupWeight)}</span>` : ''}</span>${avgs(r)}</summary><table>${gradeRows(r.list)}</table></details>`;
   return `<h2>Anno ${esc(y.year)}</h2>
 <div class="card total"><div class="row"><span>Media generale</span>${avgs(y.overall)}</div></div>
