@@ -41,14 +41,14 @@ const grades = await run(
 
 const subjectIds = [...new Set(grades.map((g) => g.subject_id).filter(Boolean))];
 const gradedSubjects = subjectIds.length
-  ? await run(sb.from('subjects').select('id, name, class_id, position').in('id', subjectIds), 'subjects')
+  ? await run(sb.from('subjects').select('id, name, class_id, position, category, period, is_group, parent_id, group_weight').in('id', subjectIds), 'subjects')
   : [];
 
 // Upcoming tests for my class(es).
 const classIds = [...new Set(gradedSubjects.map((s) => s.class_id).filter(Boolean))];
 // All subjects of my class(es), so upcoming tests in subjects without grades still get a name.
 const subjects = classIds.length
-  ? await run(sb.from('subjects').select('id, name, class_id, position').in('class_id', classIds), 'class subjects')
+  ? await run(sb.from('subjects').select('id, name, class_id, position, category, period, is_group, parent_id, group_weight').in('class_id', classIds), 'class subjects')
   : gradedSubjects;
 const today = new Date().toISOString().slice(0, 10);
 const upcoming = classIds.length
@@ -75,24 +75,71 @@ function wavg(list) {
   const w = list.reduce((a, g) => a + weightOf(g), 0);
   return w > 0 ? list.reduce((a, g) => a + Number(g.value) * weightOf(g), 0) / w : null;
 }
-const subjectSort = (a, b) => a.pos - b.pos || a.name.localeCompare(b.name);
 const groupBy = (list, key) => list.reduce((m, x) => ((m[key(x)] ??= []).push(x), m), {});
+const bySort = (a, b) => (a.position ?? 999) - (b.position ?? 999) || String(a.name).localeCompare(String(b.name));
 
-// Never mix school years: one section per year, each with per-semester and whole-year averages per subject.
+// Recupero: a grade marked recupero becomes the grade of its exam; the other grades of that exam stop counting.
+const recuperoExams = new Set(grades.filter((g) => g.recupero && g.exam_id).map((g) => g.exam_id));
+for (const g of grades) g.replaced = !g.recupero && recuperoExams.has(g.exam_id);
+const counted = (list) => list.filter((g) => !g.replaced);
+
+// Maturità subjects: the full-year average uses only 2nd-semester grades.
+// TODO: how a subject is marked as maturità is not known yet; until then every subject uses all grades.
+const isMaturita = (subject) => false;
+
+// Group average: average of the subjects in it, multiplied by their group_weight. Subjects without grades are skipped.
+function groupAvg(children, pick) {
+  const parts = children.map((c) => ({ v: pick(c), w: c.groupWeight })).filter((p) => p.v !== null && p.w > 0);
+  const w = parts.reduce((a, p) => a + p.w, 0);
+  return w > 0 ? parts.reduce((a, p) => a + p.v * p.w, 0) / w : null;
+}
+const mean = (vals) => ((vals = vals.filter((v) => v !== null)).length ? vals.reduce((a, v) => a + v, 0) / vals.length : null);
+
+// Never mix school years: one section per year, each with per-semester and whole-year averages.
 const years = Object.entries(groupBy(grades, (g) => g.school_year ?? '?'))
   .sort(([a], [b]) => String(b).localeCompare(String(a)))
   .map(([year, yearGrades]) => {
-    const semesters = [...new Set(yearGrades.map((g) => g.semester ?? '?'))].sort((a, b) => String(a).localeCompare(String(b)));
-    const subjectsRows = Object.entries(groupBy(yearGrades, (g) => g.subject_id ?? 'none'))
-      .map(([id, list]) => ({
-        name: subjById[id]?.name ?? 'Altro',
-        pos: subjById[id]?.position ?? 999,
-        bySem: Object.fromEntries(semesters.map((s) => [s, wavg(list.filter((g) => (g.semester ?? '?') === s))])),
-        year: wavg(list),
-        list,
-      }))
-      .sort(subjectSort);
-    return { year, semesters, subjectsRows };
+    const semesters = [...new Set(yearGrades.map((g) => String(g.semester ?? '?')))].sort();
+    const lastSem = semesters[semesters.length - 1];
+    const subjectRow = (id, list) => {
+      const s = subjById[id] ?? { name: 'Altro' };
+      const c = counted(list);
+      const bySem = Object.fromEntries(semesters.map((sem) => [sem, wavg(c.filter((g) => String(g.semester ?? '?') === sem))]));
+      return {
+        id, name: s.name, position: s.position, list,
+        groupWeight: s.group_weight === null || s.group_weight === undefined ? 1 : Number(s.group_weight),
+        bySem,
+        year: isMaturita(s) ? bySem[lastSem] ?? null : wavg(c),
+      };
+    };
+    // Top-level units: plain subjects, and groups made of their subjects.
+    const units = {};
+    for (const [id, list] of Object.entries(groupBy(yearGrades, (g) => g.subject_id ?? 'none'))) {
+      const row = subjectRow(id, list);
+      const parent = subjById[id]?.parent_id && subjById[subjById[id].parent_id];
+      // Grades entered directly on a group count as one more subject inside it.
+      const groupId = parent ? parent.id : subjById[id]?.is_group ? id : null;
+      if (groupId) {
+        const g = subjById[groupId];
+        const u = (units[groupId] ??= { id: groupId, name: g.name, position: g.position, children: [] });
+        u.children.push(row);
+      } else {
+        units[id] = row;
+      }
+    }
+    const rows = Object.values(units).sort(bySort).map((u) => {
+      if (!u.children) return u;
+      u.children.sort(bySort);
+      u.bySem = Object.fromEntries(semesters.map((sem) => [sem, groupAvg(u.children, (c) => c.bySem[sem])]));
+      u.year = groupAvg(u.children, (c) => c.year);
+      return u;
+    });
+    // Overall average: plain mean of the top-level units (a group counts as one subject).
+    const overall = {
+      bySem: Object.fromEntries(semesters.map((sem) => [sem, mean(rows.map((r) => r.bySem[sem]))])),
+      year: mean(rows.map((r) => r.year)),
+    };
+    return { year, semesters, rows, overall };
   });
 
 const color = (v) => (v === null ? 'muted' : v >= 5 ? 'good' : v >= 4 ? 'ok' : 'bad');
@@ -115,6 +162,9 @@ details summary{display:flex;justify-content:space-between;cursor:pointer;list-s
 table{width:100%;border-collapse:collapse;margin-top:8px;font-size:.9rem}
 td{padding:6px 0;border-top:1px solid #8882}td:last-child{text-align:right;font-variant-numeric:tabular-nums}
 .avgs{display:flex;gap:14px;font-variant-numeric:tabular-nums}.avgs small{color:var(--muted);font-weight:400;margin-right:3px}
+.sub{border-top:1px solid #8883;padding:10px 0 0 10px;margin-top:10px}.sub summary{font-weight:500}
+.replaced td{text-decoration:line-through;opacity:.5}.total .row{display:flex;justify-content:space-between;font-weight:700}
+summary{gap:10px;align-items:baseline}
 </style></head><body><main>
 <h1>📚 Voti di Ramon</h1>
 <div class="muted">Aggiornato: ${esc(new Date().toLocaleString('it-CH', { timeZone: 'Europe/Zurich' }))}</div>
@@ -122,9 +172,14 @@ td{padding:6px 0;border-top:1px solid #8882}td:last-child{text-align:right;font-
 <h2>Prossime verifiche</h2>
 ${upcoming.length ? upcoming.map((e) => `<div class="card">${esc(fmtDate(e.exam_date))} · <b>${esc(subjById[e.subject_id]?.name ?? '')}</b> ${esc(e.title)}</div>`).join('') : '<div class="card muted">Nessuna verifica in programma.</div>'}
 
-${years.map((y) => `<h2>Anno ${esc(y.year)}</h2>
-${y.subjectsRows.map((r) => `<details class="card"><summary><span>${esc(r.name)}</span><span class="avgs">${y.semesters.map((s) => `<span><small>S${esc(s)}</small><span class="${color(r.bySem[s])}">${fmtAvg(r.bySem[s])}</span></span>`).join('')}<span><small>Anno</small><span class="${color(r.year)}">${fmtAvg(r.year)}</span></span></span></summary>
-<table>${r.list.map((g) => `<tr><td>${esc(fmtDate(g.date))} ${esc(g.description)} <span class="muted">S${esc(g.semester ?? '?')}</span>${g.recupero ? ' (recupero)' : ''}${weightOf(g) !== 1 ? ` <span class="muted">×${esc(weightOf(g))}</span>` : ''}</td><td class="${color(Number(g.value))}">${esc(g.value)}</td></tr>`).join('')}</table></details>`).join('')}`).join('') || '<div class="card muted">Ancora nessun voto.</div>'}
+${years.map((y) => {
+  const avgs = (r) => `<span class="avgs">${y.semesters.map((s) => `<span><small>S${esc(s)}</small><span class="${color(r.bySem[s])}">${fmtAvg(r.bySem[s])}</span></span>`).join('')}<span><small>Anno</small><span class="${color(r.year)}">${fmtAvg(r.year)}</span></span></span>`;
+  const gradeRows = (list) => list.map((g) => `<tr${g.replaced ? ' class="replaced"' : ''}><td>${esc(fmtDate(g.date))} ${esc(g.description)} <span class="muted">S${esc(g.semester ?? '?')}</span>${g.recupero ? ' <b>(recupero)</b>' : ''}${weightOf(g) !== 1 ? ` <span class="muted">×${esc(weightOf(g))}</span>` : ''}</td><td class="${color(Number(g.value))}">${esc(g.value)}</td></tr>`).join('');
+  const subjectCard = (r, cls = 'card') => `<details class="${cls}"><summary><span>${esc(r.name)}${r.groupWeight !== undefined && cls === 'sub' && r.groupWeight !== 1 ? ` <span class="muted">×${esc(r.groupWeight)}</span>` : ''}</span>${avgs(r)}</summary><table>${gradeRows(r.list)}</table></details>`;
+  return `<h2>Anno ${esc(y.year)}</h2>
+<div class="card total"><div class="row"><span>Media generale</span>${avgs(y.overall)}</div></div>
+${y.rows.map((r) => (r.children ? `<details class="card"><summary><span>${esc(r.name)} <span class="muted">(gruppo)</span></span>${avgs(r)}</summary>${r.children.map((c) => subjectCard(c, 'sub')).join('')}</details>` : subjectCard(r))).join('')}`;
+}).join('') || '<div class="card muted">Ancora nessun voto.</div>'}
 </main></body></html>`;
 
 mkdirSync('dist', { recursive: true });
