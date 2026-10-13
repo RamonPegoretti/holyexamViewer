@@ -21,17 +21,19 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
-      - run: npm install
+          node-version: 22   # supabase-js 2.117 needs Node 22+
+      - run: npm ci
       - name: Fetch grades
         run: node fetch.mjs
         env:
           HOLYEXAM_EMAIL: ${{ secrets.HOLYEXAM_EMAIL }}
           HOLYEXAM_PASSWORD: ${{ secrets.HOLYEXAM_PASSWORD }}
       - name: Password-protect the page
-        run: npx staticrypt dist/index.html -p "$PAGE_PASSWORD" -d dist --short --remember 30 --template-title "Voti di Ramon"
+        run: |
+          test -n "$STATICRYPT_PASSWORD" || { echo "PAGE_PASSWORD secret is missing"; exit 1; }
+          npx staticrypt dist/index.html -d dist --short --remember 30 --template-title "Voti di Ramon"
         env:
-          PAGE_PASSWORD: ${{ secrets.PAGE_PASSWORD }}
+          STATICRYPT_PASSWORD: ${{ secrets.PAGE_PASSWORD }}
       - uses: actions/upload-pages-artifact@v3
         with:
           path: dist

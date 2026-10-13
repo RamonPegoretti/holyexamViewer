@@ -40,12 +40,16 @@ const grades = await run(
 );
 
 const subjectIds = [...new Set(grades.map((g) => g.subject_id).filter(Boolean))];
-const subjects = subjectIds.length
+const gradedSubjects = subjectIds.length
   ? await run(sb.from('subjects').select('id, name, class_id, position').in('id', subjectIds), 'subjects')
   : [];
 
 // Upcoming tests for my class(es).
-const classIds = [...new Set(subjects.map((s) => s.class_id).filter(Boolean))];
+const classIds = [...new Set(gradedSubjects.map((s) => s.class_id).filter(Boolean))];
+// All subjects of my class(es), so upcoming tests in subjects without grades still get a name.
+const subjects = classIds.length
+  ? await run(sb.from('subjects').select('id, name, class_id, position').in('class_id', classIds), 'class subjects')
+  : gradedSubjects;
 const today = new Date().toISOString().slice(0, 10);
 const upcoming = classIds.length
   ? await run(
@@ -63,7 +67,7 @@ await sb.auth.signOut();
 // ---------- build the page ----------
 const subjById = Object.fromEntries(subjects.map((s) => [s.id, s]));
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
-const fmtDate = (d) => (d ? new Date(d).toLocaleDateString('it-CH', { day: '2-digit', month: '2-digit', year: 'numeric' }) : '');
+const fmtDate = (d) => (d ? new Date(d).toLocaleDateString('it-CH', { day: '2-digit', month: '2-digit', year: 'numeric', timeZone: 'Europe/Zurich' }) : '');
 
 // Weighted average per subject (approximation; the app may round or group differently).
 const bySubject = {};
