@@ -50,10 +50,6 @@ const classIds = [...new Set(gradedSubjects.map((s) => s.class_id).filter(Boolea
 const subjects = classIds.length
   ? await run(sb.from('subjects').select('id, name, class_id, position, category, period, is_group, parent_id, group_weight').in('class_id', classIds), 'class subjects')
   : gradedSubjects;
-// TEMPORARY (to find how maturità subjects are marked): subject names and categories only, no grades.
-console.log('Subjects (name | category | period | group):');
-for (const s of [...subjects].sort((a, b) => (a.position ?? 999) - (b.position ?? 999)))
-  console.log(`  ${s.name} | ${s.category ?? '-'} | ${s.period ?? '-'} | ${s.is_group ? 'group' : s.parent_id ? 'in ' + (subjects.find((p) => p.id === s.parent_id)?.name ?? '?') : '-'}`);
 const today = new Date().toISOString().slice(0, 10);
 const upcoming = classIds.length
   ? await run(
@@ -89,8 +85,7 @@ const counted = (list) => list.filter((g) => !g.replaced);
 
 // Maturità subjects: each semester is a final grade of its own, so no year average is shown;
 // in the yearly Media generale they count with their last-semester average only.
-// TODO: how a subject is marked as maturità is not known yet; until then every subject uses all grades.
-const isMaturita = (subject) => false;
+const isMaturita = (subject) => subject.category === 'maturita';
 
 // Group average: average of the subjects in it, multiplied by their group_weight. Subjects without grades are skipped.
 function groupAvg(children, pick) {
