@@ -69,21 +69,34 @@ const subjById = Object.fromEntries(subjects.map((s) => [s.id, s]));
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const fmtDate = (d) => (d ? new Date(d).toLocaleDateString('it-CH', { day: '2-digit', month: '2-digit', year: 'numeric', timeZone: 'Europe/Zurich' }) : '');
 
-// Weighted average per subject (approximation; the app may round or group differently).
-const bySubject = {};
-for (const g of grades) {
-  const k = g.subject_id ?? 'none';
-  (bySubject[k] ??= []).push(g);
+// Weight: missing = 1, 0 = does not count.
+const weightOf = (g) => (g.weight === null || g.weight === undefined || g.weight === '' ? 1 : Number(g.weight));
+function wavg(list) {
+  const w = list.reduce((a, g) => a + weightOf(g), 0);
+  return w > 0 ? list.reduce((a, g) => a + Number(g.value) * weightOf(g), 0) / w : null;
 }
-const rows = Object.entries(bySubject)
-  .map(([id, list]) => {
-    const w = list.reduce((a, g) => a + (Number(g.weight) || 1), 0);
-    const avg = list.reduce((a, g) => a + Number(g.value) * (Number(g.weight) || 1), 0) / w;
-    return { name: subjById[id]?.name ?? 'Altro', pos: subjById[id]?.position ?? 999, avg, list };
-  })
-  .sort((a, b) => a.pos - b.pos || a.name.localeCompare(b.name));
+const subjectSort = (a, b) => a.pos - b.pos || a.name.localeCompare(b.name);
+const groupBy = (list, key) => list.reduce((m, x) => ((m[key(x)] ??= []).push(x), m), {});
 
-const color = (v) => (v >= 5 ? 'good' : v >= 4 ? 'ok' : 'bad');
+// Never mix school years: one section per year, each with per-semester and whole-year averages per subject.
+const years = Object.entries(groupBy(grades, (g) => g.school_year ?? '?'))
+  .sort(([a], [b]) => String(b).localeCompare(String(a)))
+  .map(([year, yearGrades]) => {
+    const semesters = [...new Set(yearGrades.map((g) => g.semester ?? '?'))].sort((a, b) => String(a).localeCompare(String(b)));
+    const subjectsRows = Object.entries(groupBy(yearGrades, (g) => g.subject_id ?? 'none'))
+      .map(([id, list]) => ({
+        name: subjById[id]?.name ?? 'Altro',
+        pos: subjById[id]?.position ?? 999,
+        bySem: Object.fromEntries(semesters.map((s) => [s, wavg(list.filter((g) => (g.semester ?? '?') === s))])),
+        year: wavg(list),
+        list,
+      }))
+      .sort(subjectSort);
+    return { year, semesters, subjectsRows };
+  });
+
+const color = (v) => (v === null ? 'muted' : v >= 5 ? 'good' : v >= 4 ? 'ok' : 'bad');
+const fmtAvg = (v) => (v === null ? '–' : v.toFixed(2));
 
 const html = `<!doctype html>
 <html lang="it"><head><meta charset="utf-8">
@@ -101,6 +114,7 @@ details summary{display:flex;justify-content:space-between;cursor:pointer;list-s
 .avg{font-variant-numeric:tabular-nums}.good{color:var(--good)}.ok{color:var(--ok)}.bad{color:var(--bad)}
 table{width:100%;border-collapse:collapse;margin-top:8px;font-size:.9rem}
 td{padding:6px 0;border-top:1px solid #8882}td:last-child{text-align:right;font-variant-numeric:tabular-nums}
+.avgs{display:flex;gap:14px;font-variant-numeric:tabular-nums}.avgs small{color:var(--muted);font-weight:400;margin-right:3px}
 </style></head><body><main>
 <h1>📚 Voti di Ramon</h1>
 <div class="muted">Aggiornato: ${esc(new Date().toLocaleString('it-CH', { timeZone: 'Europe/Zurich' }))}</div>
@@ -108,9 +122,9 @@ td{padding:6px 0;border-top:1px solid #8882}td:last-child{text-align:right;font-
 <h2>Prossime verifiche</h2>
 ${upcoming.length ? upcoming.map((e) => `<div class="card">${esc(fmtDate(e.exam_date))} · <b>${esc(subjById[e.subject_id]?.name ?? '')}</b> ${esc(e.title)}</div>`).join('') : '<div class="card muted">Nessuna verifica in programma.</div>'}
 
-<h2>Medie per materia</h2>
-${rows.map((r) => `<details class="card"><summary><span>${esc(r.name)}</span><span class="avg ${color(r.avg)}">${r.avg.toFixed(2)}</span></summary>
-<table>${r.list.map((g) => `<tr><td>${esc(fmtDate(g.date))} ${esc(g.description)}${g.recupero ? ' (recupero)' : ''}${Number(g.weight) && Number(g.weight) !== 1 ? ` <span class="muted">×${esc(g.weight)}</span>` : ''}</td><td class="${color(Number(g.value))}">${esc(g.value)}</td></tr>`).join('')}</table></details>`).join('') || '<div class="card muted">Ancora nessun voto.</div>'}
+${years.map((y) => `<h2>Anno ${esc(y.year)}</h2>
+${y.subjectsRows.map((r) => `<details class="card"><summary><span>${esc(r.name)}</span><span class="avgs">${y.semesters.map((s) => `<span><small>S${esc(s)}</small><span class="${color(r.bySem[s])}">${fmtAvg(r.bySem[s])}</span></span>`).join('')}<span><small>Anno</small><span class="${color(r.year)}">${fmtAvg(r.year)}</span></span></span></summary>
+<table>${r.list.map((g) => `<tr><td>${esc(fmtDate(g.date))} ${esc(g.description)} <span class="muted">S${esc(g.semester ?? '?')}</span>${g.recupero ? ' (recupero)' : ''}${weightOf(g) !== 1 ? ` <span class="muted">×${esc(weightOf(g))}</span>` : ''}</td><td class="${color(Number(g.value))}">${esc(g.value)}</td></tr>`).join('')}</table></details>`).join('')}`).join('') || '<div class="card muted">Ancora nessun voto.</div>'}
 </main></body></html>`;
 
 mkdirSync('dist', { recursive: true });
