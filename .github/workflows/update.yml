@@ -23,6 +23,9 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       publish: ${{ steps.check.outputs.publish }}
+      notify: ${{ steps.plan.outputs.notify }}
+      messages: ${{ steps.plan.outputs.messages }}
+      state: ${{ steps.plan.outputs.state }}
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-node@v5
@@ -34,6 +37,13 @@ jobs:
         env:
           HOLYEXAM_EMAIL: ${{ secrets.HOLYEXAM_EMAIL }}
           HOLYEXAM_PASSWORD: ${{ secrets.HOLYEXAM_PASSWORD }}
+          PAGE_PASSWORD: ${{ secrets.PAGE_PASSWORD }}
+      - name: Plan popup notifications
+        id: plan
+        continue-on-error: true   # a notification problem must never stop the page from updating
+        run: node push.mjs plan
+        env:
+          PAGE_PASSWORD: ${{ secrets.PAGE_PASSWORD }}
       - name: Decide whether to publish
         id: check
         run: |
@@ -85,3 +95,21 @@ jobs:
     steps:
       - id: deployment
         uses: actions/deploy-pages@v4
+
+  notify:
+    needs: [build, deploy]
+    # After the page is live (or when nothing needed publishing), send what the build planned.
+    if: always() && needs.build.result == 'success' && needs.build.outputs.notify == 'true' && needs.deploy.result != 'failure'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+      - run: npm ci
+      - name: Send popup notifications
+        run: node push.mjs send
+        env:
+          PAGE_PASSWORD: ${{ secrets.PAGE_PASSWORD }}
+          MESSAGES: ${{ needs.build.outputs.messages }}
+          STATE: ${{ needs.build.outputs.state }}

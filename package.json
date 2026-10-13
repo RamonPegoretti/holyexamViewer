@@ -4,6 +4,7 @@
   "type": "module",
   "dependencies": {
     "@supabase/supabase-js": "2.117.3",
-    "staticrypt": "^3.5.0"
+    "staticrypt": "^3.5.0",
+    "web-push": "3.6.7"
   }
 }

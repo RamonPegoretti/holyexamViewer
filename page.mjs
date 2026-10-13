@@ -5,6 +5,7 @@ import { readFileSync } from 'node:fs';
 const logo = readFileSync(new URL('./logo.svg', import.meta.url), 'utf8').replace(/\s*\n\s*/g, '');
 const favicon = 'data:image/svg+xml,' + encodeURIComponent(logo);
 const chartsJs = readFileSync(new URL('./charts.client.js', import.meta.url), 'utf8');
+const notifyJs = readFileSync(new URL('./notify.client.js', import.meta.url), 'utf8');
 
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const fmtDate = (d, opts = { day: '2-digit', month: '2-digit', year: 'numeric' }) =>
@@ -41,8 +42,9 @@ const icons = {
  * @param {Array} d.grades      my grades (to show my grade next to a past exam)
  * @param {object} d.subjById   subjects by id
  * @param {(g: object) => number} d.weightOf
+ * @param {object|null} d.push    { vapid, token, url, key } for popup notifications, or null
  */
-export function renderPage({ years, exams, upcoming, grades, subjById, weightOf }) {
+export function renderPage({ years, exams, upcoming, grades, subjById, weightOf, push = null }) {
   const updated = new Date().toLocaleString('it-CH', { timeZone: 'Europe/Zurich', day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
   const subjName = (id) => subjById[id]?.name ?? 'Altro';
 
@@ -184,7 +186,7 @@ ${y.rows.map((r) => (r.children ? groupCard(r, y) : subjectCard(r, y))).join('')
     : years.length ? `<span class="muted">${esc(years[0].year)}</span>` : '';
 
   const views = [
-    ['home', 'Home', `${home || '<div class="card muted">Ancora nessun voto.</div>'}${nextExam}`],
+    ['home', 'Home', `${home || '<div class="card muted">Ancora nessun voto.</div>'}${nextExam}<h2>Notifiche</h2><div class="card notif" id="notif"></div>`],
     ['materie', 'Materie', materie || '<div class="card muted">Ancora nessun voto.</div>'],
     ['grafici', 'Grafici', '<div id="charts"></div>'],
     ['verifiche', 'Verifiche', verifiche],
@@ -284,6 +286,9 @@ svg.chart text{font:11px system-ui,-apple-system,sans-serif}svg.chart .ax{fill:v
 svg.chart .lb{fill:var(--text);font-size:12px}svg.chart .val{fill:var(--text);font-weight:700}
 .tip{position:fixed;z-index:20;background:#0b0f17;border:1px solid var(--line);color:var(--text);border-radius:8px;padding:6px 9px;font-size:.8rem;pointer-events:none;box-shadow:0 6px 20px rgba(0,0,0,.5);max-width:240px}
 @media (prefers-reduced-motion:reduce){.alert{animation:none}}
+.notif p{margin:8px 0}.notif small{display:block;margin:6px 0 10px}.notif-head{display:flex;align-items:center;gap:8px}.bell{font-size:1.2rem}
+.btn{display:block;width:100%;border:0;border-radius:12px;padding:12px;font:inherit;font-weight:700;color:#fff;background:linear-gradient(135deg,#7c9cff,#a77bff 55%,#ff6fb1);cursor:pointer}
+.btn.ghost{background:var(--card2);color:var(--muted)}.small{font-size:.85rem}.share{display:inline-block;border:1px solid var(--line);border-radius:6px;padding:0 5px}
 nav{position:fixed;bottom:0;left:0;right:0;z-index:5;background:rgba(16,21,32,.95);backdrop-filter:blur(10px);border-top:1px solid var(--line);padding-bottom:env(safe-area-inset-bottom)}
 nav .nwrap{max-width:720px;margin:0 auto;display:grid;grid-template-columns:repeat(5,1fr)}
 nav a{display:flex;flex-direction:column;align-items:center;gap:2px;padding:8px 0 10px;color:var(--muted);text-decoration:none;font-size:.72rem}
@@ -384,5 +389,7 @@ ${views.map(([id, , content]) => `<section id="v-${id}" data-view="${id}">${cont
 </script>
 <script type="application/json" id="chart-data">${JSON.stringify(chartData).replace(/</g, '\\u003c')}</script>
 <script>${chartsJs}</script>
+<script type="application/json" id="push-config">${JSON.stringify(push)}</script>
+<script>${notifyJs}</script>
 </body></html>`;
 }

@@ -3,6 +3,7 @@
 import { createClient } from '@supabase/supabase-js';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { renderPage } from './page.mjs';
+import { pushKeys, PUSH_SUPABASE_URL, PUSH_SUPABASE_KEY } from './push.mjs';
 
 // Public values from the app's config.js (safe to share by design).
 const SUPABASE_URL = 'https://tzeimuczwvpqysebswmx.supabase.co';
@@ -146,7 +147,10 @@ const years = Object.entries(groupBy(grades, (g) => g.school_year ?? '?'))
     return { year, semesters, lastSem, rows, overall };
   });
 
-const html = renderPage({ years, exams, upcoming, grades, subjById, weightOf });
+// Popup notification settings for the page (the page itself is encrypted, so the token stays private).
+const keys = pushKeys(process.env.PAGE_PASSWORD);
+const push = keys && { vapid: keys.publicKey, token: keys.token, url: PUSH_SUPABASE_URL, key: PUSH_SUPABASE_KEY };
+const html = renderPage({ years, exams, upcoming, grades, subjById, weightOf, push });
 
 mkdirSync('dist', { recursive: true });
 writeFileSync('dist/index.html', html);
