@@ -7,8 +7,16 @@ on:
     - cron: '*/30 5-20 * * *'
     # Daily refresh around 17:00 Swiss time (15:00 and 16:00 UTC cover summer and winter time).
     - cron: '0 15,16 * * *'
-  workflow_dispatch:            # "Run workflow" button: always republishes
+  # "Run workflow" button: always republishes.
+  # GitHub skips most scheduled runs on this repo, so a timer in the shared-calendar Supabase
+  # also starts this workflow (source 'timer' every 15 min, 'daily' at ~17:00 Swiss time).
+  workflow_dispatch:
     inputs:
+      source:
+        description: 'Who started the run (leave on manual)'
+        type: choice
+        options: [manual, timer, daily]
+        default: manual
       test_push:
         description: 'Send a test popup to every signed-up phone'
         type: boolean
@@ -58,8 +66,8 @@ jobs:
           version=$(openssl dgst -sha256 -hmac "$STATICRYPT_PASSWORD" -r data.json | cut -d' ' -f1)
           echo "$version" > version.txt
           live=$(curl -fsS "https://ramonpegoretti.github.io/holyexamViewer/version.txt" || true)
-          if [ "$GITHUB_EVENT_NAME" = "workflow_dispatch" ]; then reason="manual run"
-          elif [ "$CRON" = "0 15,16 * * *" ]; then reason="daily refresh"
+          if [ "$GITHUB_EVENT_NAME" = "workflow_dispatch" ] && [ "$SOURCE" = "manual" ]; then reason="manual run"
+          elif [ "$CRON" = "0 15,16 * * *" ] || [ "$SOURCE" = "daily" ]; then reason="daily refresh"
           elif [ "$version" != "$live" ]; then reason="data changed"
           else reason=""; fi
           if [ -n "$reason" ]; then echo "Publishing: $reason"; echo "publish=true" >> "$GITHUB_OUTPUT"
@@ -67,6 +75,13 @@ jobs:
         env:
           STATICRYPT_PASSWORD: ${{ secrets.PAGE_PASSWORD }}
           CRON: ${{ github.event.schedule }}
+          SOURCE: ${{ inputs.source || 'manual' }}
+      - name: Hand the timer its token
+        continue-on-error: true
+        run: node push.mjs timer
+        env:
+          PAGE_PASSWORD: ${{ secrets.PAGE_PASSWORD }}
+          DISPATCH_TOKEN: ${{ secrets.DISPATCH_TOKEN }}
       - name: Password-protect the page
         if: steps.check.outputs.publish == 'true'
         run: |

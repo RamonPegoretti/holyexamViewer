@@ -7,6 +7,7 @@
 //
 //   node push.mjs plan   (build job, after fetch.mjs) decides what to notify; writes job outputs
 //   node push.mjs send   (notify job, after the page is live) sends it and saves the new state
+//   node push.mjs timer  (build job) hands the DISPATCH_TOKEN secret to the Supabase timer that starts this workflow
 //
 // Notifications never contain grades: only the subject, so nothing sensitive shows on a lock screen.
 import { createHmac, createECDH } from 'node:crypto';
@@ -131,5 +132,10 @@ if (import.meta.url === `file://${process.argv[1]}`) {
   const mode = process.argv[2];
   if (mode === 'plan') await plan(keys);
   else if (mode === 'send') await send(keys);
-  else throw new Error('Usage: node push.mjs plan|send');
+  else if (mode === 'timer') {
+    if (!process.env.DISPATCH_TOKEN) { console.log('No DISPATCH_TOKEN secret, skipping.'); process.exit(0); }
+    const ok = await rpc('holyexam_set_dispatch_token', { p_token: keys.token, p_github: process.env.DISPATCH_TOKEN });
+    console.log(ok ? 'Timer token saved.' : 'Timer token was refused.');
+  }
+  else throw new Error('Usage: node push.mjs plan|send|timer');
 }
