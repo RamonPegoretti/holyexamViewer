@@ -32,7 +32,7 @@ export function pushKeys(password) {
   return { publicKey: b64url(ecdh.getPublicKey()), privateKey: b64url(priv), token: mac('holyexam-token-v1').toString('hex') };
 }
 
-async function rpc(fn, args) {
+export async function rpc(fn, args) {
   const res = await fetch(`${PUSH_SUPABASE_URL}/rest/v1/rpc/${fn}`, {
     method: 'POST',
     headers: { apikey: PUSH_SUPABASE_KEY, Authorization: `Bearer ${PUSH_SUPABASE_KEY}`, 'Content-Type': 'application/json' },

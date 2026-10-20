@@ -51,6 +51,11 @@ jobs:
           HOLYEXAM_EMAIL: ${{ secrets.HOLYEXAM_EMAIL }}
           HOLYEXAM_PASSWORD: ${{ secrets.HOLYEXAM_PASSWORD }}
           PAGE_PASSWORD: ${{ secrets.PAGE_PASSWORD }}
+      - name: Put tests in the shared calendar
+        continue-on-error: true   # a calendar problem must never stop the page from updating
+        run: node calendar.mjs
+        env:
+          PAGE_PASSWORD: ${{ secrets.PAGE_PASSWORD }}
       - name: Plan popup notifications
         id: plan
         continue-on-error: true   # a notification problem must never stop the page from updating
